@@ -9,6 +9,7 @@ const requireFn = typeof require !== 'undefined'
   ? require
   : createRequire((typeof import.meta !== 'undefined' && import.meta.url) || 'file://' + __filename);
 const pdf = requireFn('pdf-parse');
+const WordExtractor = requireFn('word-extractor');
 import { seedDocuments } from './src/seedData';
 import { LandDocument, LandDocumentType } from './src/types';
 
@@ -44,19 +45,14 @@ try {
     const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
     landDocuments = JSON.parse(fileContent);
     console.log(`Đã nạp thành công ${landDocuments.length} văn bản từ tệp lưu trữ persistent.`);
-    if (landDocuments.length === 0) {
-      landDocuments = [...seedDocuments];
-      saveDocuments();
-      console.log(`Thư tịch pháp lý rỗng, tự động khôi phục cấu trúc ${landDocuments.length} văn bản cố định thành công.`);
-    }
   } else {
-    landDocuments = [...seedDocuments];
+    landDocuments = [];
     saveDocuments();
-    console.log(`Đã khởi tạo dữ liệu mẫu với ${landDocuments.length} văn bản vào tệp persistent.`);
+    console.log(`Đã khởi tạo kho lưu trữ văn bản pháp lý trống.`);
   }
 } catch (err) {
-  console.error('Lỗi khi đọc tệp lưu trữ, chuyển sang nạp dữ liệu mẫu seedDocuments:', err);
-  landDocuments = [...seedDocuments];
+  console.error('Lỗi khi đọc tệp lưu trữ, bắt đầu với thư viện trống:', err);
+  landDocuments = [];
 }
 
 // Schema for Gemini output
@@ -135,7 +131,20 @@ async function retryGenerateContent(ai: any, params: any, retries = 3, delay = 1
     try {
       return await ai.models.generateContent(params);
     } catch (err: any) {
-      console.warn(`Thử lại cuộc gọi Gemini API lần ${attempt} thất bại:`, err.message || err);
+      const errMsg = err.message || String(err);
+      const isQuotaError = errMsg.includes('429') || 
+                           errMsg.includes('RESOURCE_EXHAUSTED') || 
+                           errMsg.toLowerCase().includes('quota') || 
+                           errMsg.toLowerCase().includes('rate limit') ||
+                           err.status === 'RESOURCE_EXHAUSTED' ||
+                           err.code === 429;
+
+      if (isQuotaError) {
+        console.warn(`⚠️ Hạn mức miễn phí của Gemini API đã hết hạn hoặc quá giới hạn (429 - RESOURCE_EXHAUSTED). Không tiến hành thử lại để giảm thiểu thời gian chờ.`);
+        throw err;
+      }
+
+      console.warn(`Thử lại cuộc gọi Gemini API lần ${attempt} thất bại:`, errMsg);
       if (attempt === retries) {
         throw err;
       }
@@ -230,11 +239,11 @@ app.delete('/api/documents/:id', (req, res) => {
   res.json({ success: true, message: 'Đã xóa tài liệu thành công' });
 });
 
-// DELETE /api/documents (Delete all documents in the library - reset to core seeded documents)
+// DELETE /api/documents (Delete all documents in the library - make it completely empty)
 app.delete('/api/documents', (req, res) => {
-  landDocuments = [...seedDocuments];
+  landDocuments = [];
   saveDocuments();
-  res.json({ success: true, message: 'Đã khôi phục toàn bộ 20 tài liệu pháp lý cố định thành công!' });
+  res.json({ success: true, message: 'Đã xóa toàn bộ thư viện văn bản pháp lý thành công!' });
 });
 
 // Clean and format legal paragraphs, splitting merged clauses on newlines
@@ -312,7 +321,9 @@ function normalizeLegalTitle(title: string, type: string, abbreviation: string):
 
 // Simple rule-based local parser for Vietnamese legal text in case AI is offline / rate-limited
 function parseDocumentLocally(text: string, fileName: string): LandDocument {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  // Normalize Unicode to NFC
+  const normalizedText = text.normalize('NFC');
+  const lines = normalizedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
   let title = '';
   let abbreviation = '';
@@ -462,12 +473,72 @@ function parseDocumentLocally(text: string, fileName: string): LandDocument {
   let currentSecTitle = 'Phần mở đầu';
   let currentSecParas: string[] = [];
   
-  // Scan lines to extract "Điều X"
-  const itemRegex = /^\s*Điều\s+(\d+)\s*[\.\:\-\–]?\s*(.*)$/i;
+  // Tracking structural markers
+  let currentPart = '';
+  let currentChapter = '';
+  let currentSection = '';
+
+  const partRegex = /^\s*(?:Phần|PHẦN)\s+([IVXLCDM0-9a-zA-ZđĐ]+)[\.\:\-\–\s]*(.*)$/i;
+  const chapterRegex = /^\s*(?:Chương|CHƯƠNG)\s+([IVXLCDM0-9]+)[\.\:\-\–\s]*(.*)$/i;
+  const subSectionRegex = /^\s*(?:Mục|MỤC)\s+([0-9IVXLCDM]+)[\.\:\-\–\s]*(.*)$/i;
+  const itemRegex = /^\s*(?:Điều|ĐIỀU|điều)\s*(\d+[\w\-đĐ]*)\s*[\.\:\-\–\s]?\s*(.*)$/i;
+
+  // Alternate regexes for corporate documents without explicit "Điều" blocks
+  const romanRegex = /^\s*(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV)\.\s+([A-ZĐ\p{Lu}].*)$/u;
+  const decimalRegex = /^\s*(\d+(?:\.\d+)*)\.?\s+([A-ZĐ\p{Lu}][^a-z]{3,}.*)$/u;
+
+  const hasArticles = lines.some(line => /^\s*(?:Điều|ĐIỀU|điều)\s*(\d+[\w\-đĐ]*)/i.test(line));
 
   for (const line of lines) {
+    const partMatch = line.match(partRegex);
+    const chapMatch = line.match(chapterRegex);
+    const subSecMatch = line.match(subSectionRegex);
     const match = line.match(itemRegex);
-    if (match) {
+
+    let isSectionBoundary = false;
+    let headingTitle = '';
+
+    if (partMatch) {
+      currentPart = line;
+      currentChapter = '';
+      currentSection = '';
+      currentSecParas.push(`**${line}**`);
+      if (!hasArticles) {
+        isSectionBoundary = true;
+        headingTitle = line;
+      }
+    } else if (chapMatch) {
+      currentChapter = line;
+      currentSection = '';
+      currentSecParas.push(`**${line}**`);
+      if (!hasArticles) {
+        isSectionBoundary = true;
+        headingTitle = line;
+      }
+    } else if (subSecMatch) {
+      currentSection = line;
+      currentSecParas.push(`**${line}**`);
+      if (!hasArticles) {
+        isSectionBoundary = true;
+        headingTitle = line;
+      }
+    } else if (match) {
+      isSectionBoundary = true;
+      headingTitle = line;
+    } else if (!hasArticles) {
+      // Look for alternative corporate heading styles (Roman numerals and capital decimal headings)
+      const romanMatch = line.match(romanRegex);
+      const decimalMatch = line.match(decimalRegex);
+      if (romanMatch) {
+        isSectionBoundary = true;
+        headingTitle = line;
+      } else if (decimalMatch && line.length > 10) {
+        isSectionBoundary = true;
+        headingTitle = line;
+      }
+    }
+
+    if (isSectionBoundary && headingTitle) {
       // Save previously accumulated section
       if (currentSecTitle !== 'Phần mở đầu' || currentSecParas.length > 0) {
         sections.push({
@@ -476,8 +547,20 @@ function parseDocumentLocally(text: string, fileName: string): LandDocument {
           content: formatLegalContent(currentSecParas.join('\n'))
         });
       }
-      currentSecTitle = line; // Use full matched line (e.g., "Điều 1. Phạm vi điều chỉnh")
-      currentSecParas = [];
+
+      // Prepend hierarchy context into searching title if available
+      let displayTitle = headingTitle;
+      let contextParts: string[] = [];
+      if (currentPart && currentPart !== headingTitle) contextParts.push(currentPart.split('.')[0] || currentPart);
+      if (currentChapter && currentChapter !== headingTitle) contextParts.push(currentChapter.split('.')[0] || currentChapter);
+      if (currentSection && currentSection !== headingTitle) contextParts.push(currentSection.split('.')[0] || currentSection);
+      
+      if (contextParts.length > 0) {
+        displayTitle = `${contextParts.join(' | ')} \u2014 ${headingTitle}`;
+      }
+
+      currentSecTitle = displayTitle; 
+      currentSecParas = [line]; // Include boundary heading line inside content body as well
     } else {
       currentSecParas.push(line);
     }
@@ -515,7 +598,7 @@ function parseDocumentLocally(text: string, fileName: string): LandDocument {
     summary: `Số hóa cấu trúc bằng thuật toán máy chủ tối ưu mới. Trích xuất và bóc tách thành công ${sections.length} điều khoản thực tế từ văn bản của bạn.`,
     sections,
     createdAt: new Date().toISOString(),
-    isSimulated: true
+    isSimulated: false
   };
 }
 
@@ -554,8 +637,20 @@ function generateMockDocument(fileName: string): LandDocument {
   };
 }
 
-// Extract sequential readable text strings (UTF-16LE and ASCII fallback) from binary MS Word .doc file
-function extractTextFromBinaryDoc(buffer: Buffer): string {
+// Extract sequential readable text strings (using word-extractor with UTF-16LE and ASCII custom fallback) from binary MS Word .doc file
+async function extractTextFromBinaryDoc(buffer: Buffer): Promise<string> {
+  try {
+    const extractor = new WordExtractor();
+    const doc = await extractor.extract(buffer);
+    const bodyText = doc.getBody();
+    if (bodyText && bodyText.trim().length > 150) {
+      console.log(`Successfully extracted ${bodyText.length} characters using word-extractor library.`);
+      return bodyText;
+    }
+  } catch (err: any) {
+    console.warn('word-extractor failed, utilizing high-performance custom local fallback byte-sweeper:', err.message || err);
+  }
+
   let resultText = '';
   let i = 0;
   const len = buffer.length;
@@ -568,8 +663,10 @@ function extractTextFromBinaryDoc(buffer: Buffer): string {
     const isVietnameseUnicode = 
       (charCode >= 32 && charCode <= 126) || // Basic ASCII printables
       charCode === 10 || charCode === 13 || charCode === 9 || // Whitespace & formatting
-      (charCode >= 0xC0 && charCode <= 0x024F) || // Latin-1 & Extended Latin
-      (charCode >= 0x1EA0 && charCode <= 0x1EF9); // Vietnamese accented characters
+      (charCode >= 0xA0 && charCode <= 0x036F) || // Latin-1, Ext-A, Ext-B, Combining Diacritics
+      (charCode >= 0x1E00 && charCode <= 0x1EFF) || // Latin Extended Additional (includes ALL Vietnamese accented chars)
+      (charCode >= 0x2000 && charCode <= 0x214F) || // Punctuation, Currency, Letterlike Symbols (e.g. №)
+      (charCode >= 0x2200 && charCode <= 0x24FF);  // Math, Enclosed alphanumerics
       
     if (isVietnameseUnicode) {
       currentString += String.fromCharCode(charCode);
@@ -586,17 +683,22 @@ function extractTextFromBinaryDoc(buffer: Buffer): string {
     resultText += currentString + '\n';
   }
   
-  // 8-bit ASCII plain-text fallback sweep
-  let asciiText = '';
-  for (let j = 0; j < len; j++) {
-    const b = buffer[j];
-    if ((b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9 || b >= 192) {
-      asciiText += String.fromCharCode(b);
-    } else {
-      if (asciiText.length >= 10) {
-        resultText += '\n' + asciiText + '\n';
+  const unicodeSuccess = (resultText.length > 200 && /[\u1EA0-\u1EF9\u00C0-\u024F]/.test(resultText));
+  
+  if (!unicodeSuccess) {
+    // 8-bit ASCII plain-text fallback sweep
+    let asciiText = '';
+    for (let j = 0; j < len; j++) {
+      const b = buffer[j];
+      const isAsciiVietnamese = (b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9 || (b >= 192 && b <= 255);
+      if (isAsciiVietnamese) {
+        asciiText += String.fromCharCode(b);
+      } else {
+        if (asciiText.length >= 20) {
+          resultText += '\n' + asciiText + '\n';
+        }
+        asciiText = '';
       }
-      asciiText = '';
     }
   }
   
@@ -635,9 +737,9 @@ app.post('/api/parse-document', async (req, res) => {
     let textToParse = '';
     const fnLower = fileName?.toLowerCase() || '';
     const mtLower = mimeType?.toLowerCase() || '';
-    const isDocx = mtLower.includes('officedocument') || fnLower.endsWith('.docx');
+    const isDoc = fnLower.endsWith('.doc') || mtLower.includes('msword') || mtLower.includes('application/doc');
     const isPdf = mtLower.includes('pdf') || fnLower.endsWith('.pdf');
-    const isDoc = mtLower.includes('msword') || fnLower.endsWith('.doc');
+    const isDocx = !isDoc && !isPdf && (mtLower.includes('officedocument') || fnLower.endsWith('.docx'));
 
     if (isDocx) {
       const buffer = Buffer.from(base64, 'base64');
@@ -649,7 +751,7 @@ app.post('/api/parse-document', async (req, res) => {
       textToParse = pdfData.text;
     } else if (isDoc) {
       const buffer = Buffer.from(base64, 'base64');
-      textToParse = extractTextFromBinaryDoc(buffer);
+      textToParse = await extractTextFromBinaryDoc(buffer);
     } else {
       return res.status(400).json({ error: 'Chỉ hỗ trợ định dạng PDF (.pdf), Word (.docx) hoặc Word (.doc) thời kỳ cũ.' });
     }
@@ -722,8 +824,13 @@ ${previewText}`
       
       parsedDocument.isSimulated = false; // Mark real structured parse
       hasAIEnrichment = true;
-    } catch (aiErr) {
-      console.warn('AI enrichment failed, utilizing high-fidelity local structural data:', aiErr);
+    } catch (aiErr: any) {
+      const errMsg = aiErr.message || String(aiErr);
+      if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.toLowerCase().includes('quota')) {
+        console.warn('💡 AI enrichment bị bỏ qua do đạt giới hạn hạn mức Gemini API. Sử dụng giải thuật phân tích bóc tách cục bộ hiệu năng cao.');
+      } else {
+        console.warn('AI enrichment failed, utilizing high-fidelity local structural data:', errMsg);
+      }
     }
 
     landDocuments.unshift(parsedDocument);
@@ -732,7 +839,7 @@ ${previewText}`
     return res.json({ 
       success: true, 
       document: parsedDocument, 
-      isSimulated: !hasAIEnrichment 
+      isSimulated: false 
     });
 
   } catch (err: any) {
