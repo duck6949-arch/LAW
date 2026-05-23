@@ -3,10 +3,20 @@ import fs from 'fs';
 
 console.log('--- Legalis Land Build Process Starting ---');
 
+// Automatically run sync_seed.js to bake user-entered documents from data/documents.json permanently into the app code (seedData.ts)
+try {
+  console.log('0. Syncing live user documents from documents.json to static seedData.ts...');
+  execSync('node sync_seed.js', { stdio: 'inherit' });
+  console.log('Dynamic documents synchronized successfully!');
+} catch (err) {
+  console.warn('Failed to dynamically sync documents.json. Proceeding with existing seedData.ts content. Error:', err);
+}
+
 const filePath = './src/seedData.ts';
 try {
   let fileContent = fs.readFileSync(filePath, 'utf-8');
   console.log('Original File size:', fileContent.length);
+
 
   const targetStr = 'quy định tại Thông tư nà';
   const idx = fileContent.lastIndexOf(targetStr);
