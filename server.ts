@@ -44,14 +44,19 @@ try {
     const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
     landDocuments = JSON.parse(fileContent);
     console.log(`Đã nạp thành công ${landDocuments.length} văn bản từ tệp lưu trữ persistent.`);
+    if (landDocuments.length === 0) {
+      landDocuments = [...seedDocuments];
+      saveDocuments();
+      console.log(`Thư tịch pháp lý rỗng, tự động khôi phục cấu trúc ${landDocuments.length} văn bản cố định thành công.`);
+    }
   } else {
-    landDocuments = [];
+    landDocuments = [...seedDocuments];
     saveDocuments();
-    console.log(`Đã khởi tạo kho lưu trữ văn bản pháp lý trống.`);
+    console.log(`Đã khởi tạo dữ liệu mẫu với ${landDocuments.length} văn bản vào tệp persistent.`);
   }
 } catch (err) {
-  console.error('Lỗi khi đọc tệp lưu trữ, bắt đầu với thư viện trống:', err);
-  landDocuments = [];
+  console.error('Lỗi khi đọc tệp lưu trữ, chuyển sang nạp dữ liệu mẫu seedDocuments:', err);
+  landDocuments = [...seedDocuments];
 }
 
 // Schema for Gemini output
@@ -225,11 +230,11 @@ app.delete('/api/documents/:id', (req, res) => {
   res.json({ success: true, message: 'Đã xóa tài liệu thành công' });
 });
 
-// DELETE /api/documents (Delete all documents in the library - make it completely empty)
+// DELETE /api/documents (Delete all documents in the library - reset to core seeded documents)
 app.delete('/api/documents', (req, res) => {
-  landDocuments = [];
+  landDocuments = [...seedDocuments];
   saveDocuments();
-  res.json({ success: true, message: 'Đã xóa toàn bộ thư viện văn bản pháp lý thành công!' });
+  res.json({ success: true, message: 'Đã khôi phục toàn bộ 20 tài liệu pháp lý cố định thành công!' });
 });
 
 // Clean and format legal paragraphs, splitting merged clauses on newlines

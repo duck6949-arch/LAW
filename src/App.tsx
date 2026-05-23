@@ -191,9 +191,13 @@ export default function App() {
     }
   };
 
-  // Save documents to localStorage automatically to support fully stateless environments like Vercel
+  // Save non-seed documents to localStorage automatically to support fully stateless environments like Vercel
   useEffect(() => {
-    localStorage.setItem('tplaw_custom_documents', JSON.stringify(documents));
+    if (documents.length > 0) {
+      const seedIds = new Set(seedDocuments.map(d => d.id));
+      const customDocs = documents.filter(doc => !seedIds.has(doc.id));
+      localStorage.setItem('tplaw_custom_documents', JSON.stringify(customDocs));
+    }
   }, [documents]);
 
   useEffect(() => {
@@ -648,19 +652,19 @@ export default function App() {
           method: 'DELETE'
         });
         if (res.ok) {
-          setDocuments([]);
+          await fetchDocuments();
           setSelectedDocId('');
           setViewingDocInRepoId(null);
-          setUploadSuccess('Đã xóa sạch toàn bộ tài liệu pháp lý khỏi cơ sở dữ liệu hệ thống thành công!');
+          setUploadSuccess('Đã khôi phục toàn bộ 20 tài liệu pháp lý cốt lõi về trạng thái cố định!');
         } else {
           throw new Error('API server reset non-ok');
         }
       } catch (err) {
-        console.warn('DELETE /api/documents failed, falling back to local empty state:', err);
-        setDocuments([]);
-        setSelectedDocId('');
+        console.warn('DELETE /api/documents failed, falling back to local seed restore:', err);
+        setDocuments(seedDocuments);
+        setSelectedDocId(seedDocuments[0]?.id || '');
         setViewingDocInRepoId(null);
-        setUploadSuccess('Đã xóa sạch toàn bộ tài liệu pháp lý khỏi cơ sở dữ liệu hệ thống (ở chế độ ngoại tuyến)!');
+        setUploadSuccess('Đã khôi phục toàn bộ 20 tài liệu pháp lý cốt lõi về trạng thái cố định (ngoại tuyến)!');
       }
     }
   };
