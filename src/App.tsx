@@ -80,6 +80,7 @@ export default function App() {
   const [selectedDocId, setSelectedDocId] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isDragging, setIsDragging] = useState<boolean>(false);
 
   // Debounce search input to avoid lagging typing on heavy documents parsing
   useEffect(() => {
@@ -274,18 +275,19 @@ export default function App() {
 
     const allFiles = Array.from(files);
     
-    // Clean and filter documents (Support .pdf, .docx, exclude system paths)
+    // Clean and filter documents (Support .pdf, .docx, .doc, exclude system paths & temp lock files)
     const validFiles = allFiles.filter(file => {
       const nameLower = file.name.toLowerCase();
       const mimeType = file.type || '';
       const isPdf = nameLower.endsWith('.pdf') || mimeType === 'application/pdf';
       const isDocx = nameLower.endsWith('.docx') || mimeType.includes('officedocument');
+      const isDoc = nameLower.endsWith('.doc') || mimeType === 'application/msword';
       const relativePath = file.webkitRelativePath || '';
-      return (isPdf || isDocx) && !nameLower.startsWith('.') && !relativePath.includes('__MACOSX');
+      return (isPdf || isDocx || isDoc) && !nameLower.startsWith('.') && !file.name.startsWith('~$') && !relativePath.includes('__MACOSX');
     });
 
     if (validFiles.length === 0) {
-      setUploadError('Không tìm thấy tệp .pdf hoặc .docx hợp lệ trong nguồn cấp của bạn.');
+      setUploadError('Không tìm thấy tệp .pdf, .docx hoặc .doc hợp lệ trong nguồn cấp của bạn.');
       return;
     }
 
@@ -447,6 +449,29 @@ export default function App() {
 
   const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     processFilesList(e.target.files);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (!isUploading && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFilesList(e.dataTransfer.files);
+    }
   };
 
   // Submit manual document
@@ -1799,8 +1824,30 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                 exit={{ opacity: 0, y: -5 }}
                 transition={{ duration: 0.12 }}
                 id="input-compartment"
-                className="bg-white border border-[#D1CEC7] rounded-xl p-5 shadow-xs transition-all hover:shadow-sm"
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border rounded-xl p-5 shadow-xs transition-all duration-300 relative overflow-hidden ${
+                  isDragging 
+                    ? 'border-[#8C271E] bg-[#8C271E]/5 ring-2 ring-[#8C271E]/25 scale-[1.01]' 
+                    : 'bg-white border-[#D1CEC7] hover:shadow-sm'
+                }`}
               >
+                {/* Visual Drag and Drop Overlay */}
+                {isDragging && (
+                  <div className="absolute inset-0 bg-white/95 backdrop-blur-xs flex flex-col items-center justify-center z-50 pointer-events-none p-6 text-center border-2 border-dashed border-[#8C271E] rounded-xl animate-fadeIn">
+                    <div className="w-16 h-16 bg-[#8C271E]/10 rounded-full flex items-center justify-center mb-4">
+                      <Upload className="w-8 h-8 text-[#8C271E] animate-bounce" />
+                    </div>
+                    <h3 className="text-base font-bold text-[#8C271E] font-sans uppercase tracking-wider">
+                      Thả tệp văn bản pháp lý tại đây
+                    </h3>
+                    <p className="text-xs text-stone-500 font-serif italic mt-1.5 max-w-sm leading-relaxed">
+                      Nạp trực tiếp các tệp Word (.docx, .doc), PDF (.pdf) hoặc toàn bộ thư mục tài liệu để hệ thống TP LAW bóc tách điều khoản tự động.
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 font-sans">
                   <div className="flex-1">
                     <h2 className="text-xs font-bold uppercase tracking-widest text-[#8C271E] mb-1.5 flex items-center gap-1.5">
@@ -1808,7 +1855,7 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                       Mục Nhập thông tin & Tải dữ liệu văn bản mới
                     </h2>
                     <p className="text-[11px] text-stone-500 font-serif italic max-w-xl leading-relaxed">
-                      Lựa chọn hình thức tải dữ liệu độc bản, nhiều tệp hoặc nguyên một Thư mục (.pdf, .docx) để trí tuệ nhân tạo nhận dạng, số hóa tự động:
+                      Kéo thả trực tiếp tệp tin vào bảng này, hoặc lựa chọn hình thức tải dữ liệu độc bản, nhiều tệp hoặc nguyên một Thư mục (.pdf, .docx, .doc):
                     </p>
                   </div>
 
@@ -1824,7 +1871,7 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                         type="file" 
                         ref={fileInputRef}
                         onChange={handleFileUpload}
-                        accept=".pdf,.docx" 
+                        accept=".pdf,.docx,.doc" 
                         multiple
                         className="hidden" 
                       />
@@ -1837,7 +1884,7 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                         <>
                           <Files className="w-4 h-4 mb-1 text-stone-600" />
                           <span className="text-[11px] font-bold text-stone-800">Tải file / Nhiều file</span>
-                          <span className="text-[8px] text-stone-400 font-mono">Hỗ trợ tệp .docx, .pdf</span>
+                          <span className="text-[8px] text-stone-400 font-mono">Hỗ trợ tệp .doc, .docx, .pdf</span>
                         </>
                       )}
                     </div>
@@ -1852,7 +1899,7 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                         type="file" 
                         ref={folderInputRef}
                         onChange={handleFolderUpload}
-                        accept=".pdf,.docx" 
+                        accept=".pdf,.docx,.doc" 
                         multiple
                         className="hidden" 
                         {...{ webkitdirectory: "", directory: "" }}
@@ -2270,7 +2317,7 @@ Thời gian trích xuất: ${new Date().toLocaleString('vi-VN')}
                                 <Database className="w-12 h-12 text-stone-300 mx-auto mb-3 stroke-[1.2]" />
                                 <h3 className="text-sm font-bold text-stone-700 font-serif">Kho lưu trữ chưa có văn bản nào</h3>
                                 <p className="text-xs text-stone-500 mt-2 font-serif italic max-w-md mx-auto">
-                                  Hiện tại hệ thống cơ sở dữ liệu trống. Vui lòng bấm vào Mục 2 bên trên để tải lên tài liệu pháp lý của bạn dạng .pdf/.docx hoặc nhập nội dung văn bản thủ công bằng tay.
+                                  Hiện tại hệ thống cơ sở dữ liệu trống. Vui lòng bấm vào Mục 2 bên trên để tải lên tài liệu pháp lý của bạn dạng .pdf/.docx/.doc hoặc nhập nội dung văn bản thủ công bằng tay.
                                 </p>
                                 <button
                                   type="button"

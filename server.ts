@@ -547,6 +547,75 @@ function generateMockDocument(fileName: string): LandDocument {
   };
 }
 
+// Extract sequential readable text strings (UTF-16LE and ASCII fallback) from binary MS Word .doc file
+function extractTextFromBinaryDoc(buffer: Buffer): string {
+  let resultText = '';
+  let i = 0;
+  const len = buffer.length;
+  
+  // High-fidelity sweep for UTF-16LE sequence (main text stream of Microsoft .doc binaries)
+  let currentString = '';
+  
+  while (i < len - 1) {
+    const charCode = buffer.readUInt16LE(i);
+    const isVietnameseUnicode = 
+      (charCode >= 32 && charCode <= 126) || // Basic ASCII printables
+      charCode === 10 || charCode === 13 || charCode === 9 || // Whitespace & formatting
+      (charCode >= 0xC0 && charCode <= 0x024F) || // Latin-1 & Extended Latin
+      (charCode >= 0x1EA0 && charCode <= 0x1EF9); // Vietnamese accented characters
+      
+    if (isVietnameseUnicode) {
+      currentString += String.fromCharCode(charCode);
+      i += 2;
+    } else {
+      if (currentString.length >= 4) {
+        resultText += currentString + '\n';
+      }
+      currentString = '';
+      i += 1; // Slide one byte forward to catch any misaligned blocks
+    }
+  }
+  if (currentString.length >= 4) {
+    resultText += currentString + '\n';
+  }
+  
+  // 8-bit ASCII plain-text fallback sweep
+  let asciiText = '';
+  for (let j = 0; j < len; j++) {
+    const b = buffer[j];
+    if ((b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9 || b >= 192) {
+      asciiText += String.fromCharCode(b);
+    } else {
+      if (asciiText.length >= 10) {
+        resultText += '\n' + asciiText + '\n';
+      }
+      asciiText = '';
+    }
+  }
+  
+  // Filter out binary formatting headers and boilerplate metadata
+  const lines = resultText.split(/[\r\n]+/)
+    .map(line => line.trim())
+    .filter(line => {
+      if (line.length < 5) return false;
+      const lower = line.toLowerCase();
+      if (lower.includes('microsoft word') || lower.includes('msword') || lower.includes('worddocument')) return false;
+      if (lower.startsWith('bjbj') || lower.startsWith('jbjb') || lower.startsWith('normal.dotm')) return false;
+      if (/^[^\w\s\u00C0-\u1EF9]{3,}$/.test(line)) return false; // purely symbols
+      return true;
+    });
+
+  // Unique sequential line deduplication
+  const uniqueLines: string[] = [];
+  for (const line of lines) {
+    if (uniqueLines.length === 0 || uniqueLines[uniqueLines.length - 1] !== line) {
+      uniqueLines.push(line);
+    }
+  }
+  
+  return uniqueLines.join('\n');
+}
+
 // POST /api/parse-document (Upload & Parse PDF/Word with hybrid local-AI architecture, always successful)
 app.post('/api/parse-document', async (req, res) => {
   try {
@@ -561,6 +630,7 @@ app.post('/api/parse-document', async (req, res) => {
     const mtLower = mimeType?.toLowerCase() || '';
     const isDocx = mtLower.includes('officedocument') || fnLower.endsWith('.docx');
     const isPdf = mtLower.includes('pdf') || fnLower.endsWith('.pdf');
+    const isDoc = mtLower.includes('msword') || fnLower.endsWith('.doc');
 
     if (isDocx) {
       const buffer = Buffer.from(base64, 'base64');
@@ -570,8 +640,11 @@ app.post('/api/parse-document', async (req, res) => {
       const buffer = Buffer.from(base64, 'base64');
       const pdfData = await pdf(buffer);
       textToParse = pdfData.text;
+    } else if (isDoc) {
+      const buffer = Buffer.from(base64, 'base64');
+      textToParse = extractTextFromBinaryDoc(buffer);
     } else {
-      return res.status(400).json({ error: 'Chỉ hỗ trợ định dạng PDF (.pdf) hoặc Word (.docx)' });
+      return res.status(400).json({ error: 'Chỉ hỗ trợ định dạng PDF (.pdf), Word (.docx) hoặc Word (.doc) thời kỳ cũ.' });
     }
 
     if (!textToParse || !textToParse.trim()) {
