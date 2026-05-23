@@ -44,15 +44,20 @@ try {
   if (fs.existsSync(DATA_FILE)) {
     const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
     landDocuments = JSON.parse(fileContent);
+    if (landDocuments.length === 0) {
+      console.log('Kho lưu trữ trống, tự động hạt giống nạp 20 tài liệu pháp lý định danh...');
+      landDocuments = [...seedDocuments];
+      saveDocuments();
+    }
     console.log(`Đã nạp thành công ${landDocuments.length} văn bản từ tệp lưu trữ persistent.`);
   } else {
-    landDocuments = [];
+    console.log('Chưa tìm thấy tệp lưu trữ, tự động hạt giống nạp 20 tài liệu pháp lý mặc định...');
+    landDocuments = [...seedDocuments];
     saveDocuments();
-    console.log(`Đã khởi tạo kho lưu trữ văn bản pháp lý trống.`);
   }
 } catch (err) {
-  console.error('Lỗi khi đọc tệp lưu trữ, bắt đầu với thư viện trống:', err);
-  landDocuments = [];
+  console.error('Lỗi khi đọc tệp lưu trữ, bắt đầu với 20 tài liệu mặc định:', err);
+  landDocuments = [...seedDocuments];
 }
 
 // Schema for Gemini output
