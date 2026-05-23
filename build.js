@@ -7,21 +7,17 @@ const filePath = './src/seedData.ts';
 try {
   let fileContent = fs.readFileSync(filePath, 'utf-8');
   console.log('Original File size:', fileContent.length);
-  const trimmed = fileContent.trim();
-  if (!trimmed.endsWith('];') && !trimmed.endsWith(']}')) {
-    console.log('Detected truncated JSON/Array in seedData.ts. Repairing...');
-    // Append the correct closing characters: 
-    // - " to close the content string
-    // - } to close the current section object
-    // - ] to close the sections array
-    // - } to close the current document object
-    // - ] to close the seedDocuments array
-    // - ; to end the statement
-    fileContent = trimmed + '"}]}]';
-    fs.writeFileSync(filePath, fileContent, 'utf-8');
-    console.log('Repaired seedData.ts successfully. New size:', fileContent.length);
+
+  const targetStr = 'quy định tại Thông tư nà';
+  const idx = fileContent.lastIndexOf(targetStr);
+  if (idx !== -1) {
+    console.log('Found truncated text in seedData.ts. Repairing...');
+    // Replace the truncated text and cleanly terminate all open tags and statements
+    const repairedContent = fileContent.slice(0, idx) + 'quy định tại Thông tư này."\n      }\n    ]\n  }\n];\n';
+    fs.writeFileSync(filePath, repairedContent, 'utf-8');
+    console.log('Repaired seedData.ts successfully! New size:', repairedContent.length);
   } else {
-    console.log('seedData.ts looks properly closed.');
+    console.log('seedData.ts has no truncated text pattern found or is already repaired.');
   }
 } catch (e) {
   console.error('Failed to analyze/repair seedData.ts:', e);
