@@ -1,0 +1,6 @@
+{
+  "name": "TP LAW",
+  "description": "Hệ thống tra cứu thông tư nghị định luật đất đai thông minh bằng Word/PDF và từ khóa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
