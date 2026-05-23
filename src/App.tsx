@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LandDocument, SearchResult } from './types';
+import { seedDocuments } from './seedData';
 
 const regexPatternCache = new Map<string, string>();
 
@@ -175,11 +176,29 @@ export default function App() {
         if (data.length > 0 && !selectedDocId) {
           setSelectedDocId(data[0].id);
         }
+      } else {
+        throw new Error('Fallback to local state');
       }
     } catch (err) {
-      console.error('Lỗi khi tải danh sách văn bản:', err);
+      console.warn('Đang tải danh sách tài liệu từ bộ nhớ cục bộ (chạy tối ưu tĩnh / Vercel):', err);
+      const localDocsStr = localStorage.getItem('tplaw_custom_documents');
+      const localDocs: LandDocument[] = localDocsStr ? JSON.parse(localDocsStr) : [];
+      const combined = [...localDocs, ...seedDocuments];
+      setDocuments(combined);
+      if (combined.length > 0 && !selectedDocId) {
+        setSelectedDocId(combined[0].id);
+      }
     }
   };
+
+  // Save non-seed documents to localStorage automatically to support fully stateless environments like Vercel
+  useEffect(() => {
+    if (documents.length > 0) {
+      const seedIds = new Set(seedDocuments.map(d => d.id));
+      const customDocs = documents.filter(doc => !seedIds.has(doc.id));
+      localStorage.setItem('tplaw_custom_documents', JSON.stringify(customDocs));
+    }
+  }, [documents]);
 
   useEffect(() => {
     fetchDocuments();
@@ -529,7 +548,10 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json();
-        setDocuments(prev => [data, ...prev]);
+        setDocuments(prev => {
+          if (prev.some(d => d.id === data.id)) return prev;
+          return [data, ...prev];
+        });
         setSelectedDocId(data.id);
         setIsManualModalOpen(false);
         setUploadSuccess(`Đã tạo văn bản "${manualAbbreviation}" thành công!`);
@@ -540,11 +562,35 @@ export default function App() {
         setManualSummary('');
         setManualRawContent('');
       } else {
-        alert('Có lỗi xảy ra khi lưu văn bản thủ công.');
+        throw new Error('API server returned unexpected state');
       }
     } catch (err) {
-      console.error(err);
-      alert('Không thể kết nối để lưu văn bản.');
+      console.warn('Lưu văn bản thủ công ngoại tuyến (chạy chế độ tĩnh / Vercel):', err);
+      // Generate a client-side document
+      const clientDoc: LandDocument = {
+        id: `doc-local-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        title: manualTitle,
+        type: manualType,
+        abbreviation: manualAbbreviation,
+        issueDate: manualIssueDate || new Date().toISOString().split('T')[0],
+        summary: manualSummary || 'Người dùng nhập thủ công tuyển tập điều khoản.',
+        sections: sectionsObj.map((s, idx) => ({
+          id: s.id || `sec-local-${idx}-${Date.now()}`,
+          title: s.title || `Điều ${idx + 1}`,
+          content: s.content || ''
+        })),
+        createdAt: new Date().toISOString()
+      };
+      setDocuments(prev => [clientDoc, ...prev]);
+      setSelectedDocId(clientDoc.id);
+      setIsManualModalOpen(false);
+      setUploadSuccess(`Đã tạo văn bản "${manualAbbreviation}" thành công (lưu vào trình duyệt)!`);
+      
+      // Reset form
+      setManualTitle('');
+      setManualAbbreviation('');
+      setManualSummary('');
+      setManualRawContent('');
     }
   };
 
@@ -590,11 +636,15 @@ export default function App() {
             setViewingDocInRepoId(null);
           }
         } else {
-          setUploadError('Không thể xóa văn bản này.');
+          throw new Error('API server returned error');
         }
       } catch (err) {
-        console.error(err);
-        setUploadError('Có lỗi xảy ra khi xóa văn bản.');
+        console.warn('DELETE /api/documents/:id failed, falling back to local state:', err);
+        setDocuments(prev => prev.filter(doc => doc.id !== targetId));
+        setUploadSuccess(`Đã xóa thành công văn bản "${targetName}" (chế độ tĩnh Vercel)`);
+        if (targetId === viewingDocInRepoId) {
+          setViewingDocInRepoId(null);
+        }
       }
     } else if (type === 'all') {
       try {
@@ -607,11 +657,14 @@ export default function App() {
           setViewingDocInRepoId(null);
           setUploadSuccess('Đã khôi phục toàn bộ 20 tài liệu pháp lý cốt lõi về trạng thái cố định!');
         } else {
-          setUploadError('Không thể khôi phục tài liệu hệ thống.');
+          throw new Error('API server reset non-ok');
         }
       } catch (err) {
-        console.error(err);
-        setUploadError('Có lỗi xảy ra khi xóa toàn bộ thư viện.');
+        console.warn('DELETE /api/documents failed, falling back to local seed restore:', err);
+        setDocuments(seedDocuments);
+        setSelectedDocId(seedDocuments[0]?.id || '');
+        setViewingDocInRepoId(null);
+        setUploadSuccess('Đã khôi phục toàn bộ 20 tài liệu pháp lý cốt lõi về trạng thái cố định (ngoại tuyến)!');
       }
     }
   };
