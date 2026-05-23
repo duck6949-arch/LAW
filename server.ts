@@ -5,8 +5,10 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import mammoth from 'mammoth';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pdf = require('pdf-parse');
+const requireFn = typeof require !== 'undefined'
+  ? require
+  : createRequire((typeof import.meta !== 'undefined' && import.meta.url) || 'file://' + __filename);
+const pdf = requireFn('pdf-parse');
 import { seedDocuments } from './src/seedData';
 import { LandDocument, LandDocumentType } from './src/types';
 
