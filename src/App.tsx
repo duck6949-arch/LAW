@@ -602,12 +602,12 @@ export default function App() {
           method: 'DELETE'
         });
         if (res.ok) {
-          setDocuments([]);
+          await fetchDocuments();
           setSelectedDocId('');
           setViewingDocInRepoId(null);
-          setUploadSuccess('Đã xóa toàn bộ thư viện văn bản khỏi hệ thống!');
+          setUploadSuccess('Đã khôi phục toàn bộ 20 tài liệu pháp lý cốt lõi về trạng thái cố định!');
         } else {
-          setUploadError('Không thể xóa tất cả văn bản trong hệ thống.');
+          setUploadError('Không thể khôi phục tài liệu hệ thống.');
         }
       } catch (err) {
         console.error(err);

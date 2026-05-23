@@ -42,6 +42,11 @@ try {
     const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
     landDocuments = JSON.parse(fileContent);
     console.log(`Đã nạp thành công ${landDocuments.length} văn bản từ tệp lưu trữ persistent.`);
+    if (landDocuments.length === 0) {
+      landDocuments = [...seedDocuments];
+      saveDocuments();
+      console.log(`Thư tịch pháp lý rỗng, tự động khôi phục cấu trúc ${landDocuments.length} văn bản cố định thành công.`);
+    }
   } else {
     landDocuments = [...seedDocuments];
     saveDocuments();
@@ -223,11 +228,11 @@ app.delete('/api/documents/:id', (req, res) => {
   res.json({ success: true, message: 'Đã xóa tài liệu thành công' });
 });
 
-// DELETE /api/documents (Delete all documents in the library)
+// DELETE /api/documents (Delete all documents in the library - reset to core seeded documents)
 app.delete('/api/documents', (req, res) => {
-  landDocuments = [];
+  landDocuments = [...seedDocuments];
   saveDocuments();
-  res.json({ success: true, message: 'Đã xóa toàn bộ thư viện tài liệu thành công' });
+  res.json({ success: true, message: 'Đã khôi phục toàn bộ 20 tài liệu pháp lý cố định thành công!' });
 });
 
 // Clean and format legal paragraphs, splitting merged clauses on newlines
