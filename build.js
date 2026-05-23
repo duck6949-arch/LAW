@@ -1,0 +1,31 @@
+import { execSync } from 'child_process';
+
+console.log('--- Legalis Land Build Process Starting ---');
+try {
+  console.log('1. Building Vite frontend assets...');
+  execSync('npx vite build', { stdio: 'inherit' });
+  console.log('Frontend built successfully!');
+} catch (err) {
+  console.error('Frontend build failed!', err);
+  process.exit(1);
+}
+
+// Support detecting both Vercel and generic static builders
+const isStaticDeploy = process.env.VERCEL || process.env.NOW_BUILDER || process.env.STATIC_BUILD;
+
+if (isStaticDeploy) {
+  console.log('--- Vercel/Static Deploy Environment Detected ---');
+  console.log('Skipping server.ts bundling since Vercel is running in static frontend-only mode.');
+} else {
+  console.log('--- Standard Container/Server Environment Detected ---');
+  console.log('2. Bundling server.ts via esbuild...');
+  try {
+    execSync('npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs', { stdio: 'inherit' });
+    console.log('server.ts bundled successfully to dist/server.cjs!');
+  } catch (err) {
+    console.error('Failed to bundle server.ts!', err);
+    process.exit(1);
+  }
+}
+
+console.log('--- Legalis Land Build Completed Successfully ---');
